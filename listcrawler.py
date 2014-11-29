@@ -4,6 +4,8 @@ from pyspark import SparkContext
 from lxml import etree, html
 from collections import Counter
 import time
+import urllib2
+import sys
 
 dates = ['2014%02d'%x for x in range(1,12)]
 
@@ -24,11 +26,15 @@ def scanUrl(listname, date, n):
 			subjects = map(lambda x:x[0].text, r.find_class('subject'))
 			authors = map(lambda x:cleanName(x.text), r.find_class('author'))
 			return subjects, authors
-		except:
-			print 'Retry %d for url %s' % (i, url)
+		except IOError as e:
+			print 'Retry %d for url %s: exception %s' % (i, url, str(e))
 			time.sleep(0.1)
 			continue
+		except Exception as e:
+			print 'For url %s, exception %s' % (url, str(e))
+			break
 	return [], []
+
 def participation(listname):
 	c = {}
 	for d in dates:
@@ -71,14 +77,17 @@ def processProject(linkPair):
 	commitSorted = sorted(commitParticipants, key=lambda x:x[0])
 	print "Participation (discuss " + dev + "):\n" + str(devSorted)
 	print "Participation (commit):\n" + str(commitSorted)
-	return sum(map(lambda x:x[1], devSorted))
+	return {'dev': devSorted, 'commit': commitSorted }
 
 if __name__ == "__main__":
 	sc = SparkContext(appName="ListCrawler")
+	if len(sys.argv) < 2:
+		print "Usage: %s [hdfs namenode]" % (sys.argv[0])
+		exit(1)
+	namenode_host = sys.argv[1]
 	links = listindex()
 	distLinks = sc.parallelize(links)
 
-	total = distLinks.map(processProject).reduce(lambda a, b: a + b)
-	print "Total participants: %d" % (total)
+	distLinks.map(processProject).saveAsTextFile('hdfs://' + namenode_host + '/links.txt')
 	sc.stop()
 		
