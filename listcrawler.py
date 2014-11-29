@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 
-import lxml.html
-from lxml import etree
+from pyspark import SparkContext
+from lxml import etree, html
 from collections import Counter
+import time
 
 dates = ['2014%02d'%x for x in range(1,12)]
 
 baseurl = "http://mail-archives.apache.org/mod_mbox/"
-commitList = "mesos-commits/"
-discussList = "mesos-dev/"
+maxTries = 5
 
 def cleanName(t):
 	if t.endswith('(JIRA)'):
@@ -17,12 +17,18 @@ def cleanName(t):
 
 def scanUrl(listname, date, n):
 	url = baseurl + listname +date+".mbox/date?"+str(n)
-	doc = lxml.html.parse(url)
-	r = doc.getroot()
-	subjects = map(lambda x:x[0].text, r.find_class('subject'))
-	authors = map(lambda x:cleanName(x.text), r.find_class('author'))
-	return subjects, authors
-
+	for i in range(maxTries):
+		try:
+			doc = html.parse(url)
+			r = doc.getroot()
+			subjects = map(lambda x:x[0].text, r.find_class('subject'))
+			authors = map(lambda x:cleanName(x.text), r.find_class('author'))
+			return subjects, authors
+		except:
+			print 'Retry %d for url %s' % (i, url)
+			time.sleep(0.1)
+			continue
+	return [], []
 def participation(listname):
 	c = {}
 	for d in dates:
@@ -43,7 +49,7 @@ def counts(dateSeries):
 	return map(lambda itm: (itm[0], len(itm[1].items())), dateSeries.items())
 
 def listindex():
-	doc = lxml.html.parse(baseurl)
+	doc = html.parse(baseurl)
 	r = doc.getroot()
 	nodes = r.cssselect('td ul li')
 	index = []
@@ -57,15 +63,22 @@ def listindex():
 			index.append({'commit': cmt[0].get('href'), 'dev': dev[0].get('href')})
 	return index
 
-links = listindex()
-if len(links) < 4:
-	print "Cannot find links"
-	exit(0)
-maxProjects = 4
-
-for i in range(maxProjects):
-	dev = links[i]['dev']
+def processProject(linkPair):
+	dev = linkPair['dev']
 	discussParticipants = counts(participation(dev))
-	commitParticipants = counts(participation(links[i]['commit']))
-	print "Participation (discuss " + dev + "):\n" + str(sorted(discussParticipants, key=lambda x:x[0]))
-	print "Participation (commit):\n" + str(sorted(commitParticipants, key=lambda x:x[0]))
+	commitParticipants = counts(participation(linkPair['commit']))
+	devSorted = sorted(discussParticipants, key=lambda x:x[0])
+	commitSorted = sorted(commitParticipants, key=lambda x:x[0])
+	print "Participation (discuss " + dev + "):\n" + str(devSorted)
+	print "Participation (commit):\n" + str(commitSorted)
+	return sum(map(lambda x:x[1], devSorted))
+
+if __name__ == "__main__":
+	sc = SparkContext(appName="ListCrawler")
+	links = listindex()
+	distLinks = sc.parallelize(links)
+
+	total = distLinks.map(processProject).reduce(lambda a, b: a + b)
+	print "Total participants: %d" % (total)
+	sc.stop()
+		
