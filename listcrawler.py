@@ -6,8 +6,10 @@ from collections import Counter
 import time
 import urllib2
 import sys
+import datetime
 
-dates = ['2014%02d'%x for x in range(1,12)]
+today = datetime.date.today()
+dates = ['%d%02d'%(today.year, month) for month in range(1,today.month)]
 
 baseurl = "http://mail-archives.apache.org/mod_mbox/"
 maxTries = 5
